@@ -764,20 +764,37 @@ class ExpressionCodegen(
 
     override fun <T> visitConst(expression: IrConst<T>, data: BlockInfo): PromisedValue {
         expression.markLineNumber(startOffset = true)
-        when (val value = expression.value) {
-            is Boolean -> {
-                // BooleanConstants _may not_ be materialized, so we ensure an instruction for the line number.
-                mv.nop()
-                return BooleanConstant(this, value)
-            }
-            is Char -> mv.iconst(value.toInt())
-            is Long -> mv.lconst(value)
-            is Float -> mv.fconst(value)
-            is Double -> mv.dconst(value)
-            is Number -> mv.iconst(value.toInt())
-            else -> if (expression.kind == IrConstKind.Null) return nullConstant else mv.aconst(value)
+        val value = expression.value
+        val type = when (value) {
+            is Boolean -> return BooleanConstant(this, value)
+            is Byte -> Type.BYTE_TYPE
+            is Char -> Type.CHAR_TYPE
+            is Long -> Type.LONG_TYPE
+            is Short -> Type.SHORT_TYPE
+            is Float -> Type.FLOAT_TYPE
+            is Double -> Type.DOUBLE_TYPE
+            is Number -> Type.INT_TYPE
+            is String -> AsmTypes.JAVA_STRING_TYPE
+            else -> OBJECT_TYPE
         }
-        return expression.onStack
+        return object : PromisedValue(this, type, expression.type) {
+            override fun materializeAt(target: Type, irTarget: IrType) {
+                when (value) {
+                    is Char -> mv.iconst(value.toInt())
+                    is Long -> mv.lconst(value)
+                    is Float -> mv.fconst(value)
+                    is Double -> mv.dconst(value)
+                    is Number -> mv.iconst(value.toInt())
+                    else -> mv.aconst(value)
+                }
+                // `null` is of any reference type.
+                if (value != null || isPrimitive(target)) {
+                    super.materializeAt(target, irTarget)
+                }
+            }
+
+            override fun discard() = mv.nop()
+        }
     }
 
     override fun visitExpressionBody(body: IrExpressionBody, data: BlockInfo) =
